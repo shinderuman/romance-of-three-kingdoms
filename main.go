@@ -7,7 +7,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,7 +57,7 @@ var (
 type Character struct {
 	Name         string `json:"名前"`
 	Reading      string `json:"読み"`
-	Zi           string `json:"字"`
+	Azana        string `json:"字"`
 	DeathYear    int    `json:"没年"`
 	DeathPlus1   int    `json:"没年+1"`
 	Leadership   int    `json:"統率"`
@@ -137,11 +140,27 @@ func sleepBetweenRequests(currentIndex, totalCount int) {
 }
 
 func outputJSON(characters []Character) {
+	// 没年昇順でソート
+	sort.Slice(characters, func(i, j int) bool {
+		return characters[i].DeathYear < characters[j].DeathYear
+	})
+
 	output, err := json.MarshalIndent(characters, "", "    ")
 	if err != nil {
 		log.Fatal("JSON変換エラー:", err)
 	}
-	fmt.Println(string(output))
+
+	jsonString := string(output)
+	fmt.Println(jsonString)
+
+	// クリップボードにコピー（macOSのみ）
+	if runtime.GOOS == "darwin" {
+		if err := copyToClipboard(jsonString); err != nil {
+			log.Printf("クリップボードへのコピーに失敗しました: %v", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "\n結果をクリップボードにコピーしました。\n")
+		}
+	}
 }
 
 // ========================================
@@ -149,9 +168,9 @@ func outputJSON(characters []Character) {
 // ========================================
 
 func loadURLsFromJSON(filename string) ([]string, error) {
-	data, err := readFile(filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ファイル読み込みエラー: %v", err)
 	}
 
 	var urls []string
@@ -159,22 +178,38 @@ func loadURLsFromJSON(filename string) ([]string, error) {
 		return nil, fmt.Errorf("JSON解析エラー: %v", err)
 	}
 
+	// 重複チェック
+	if duplicates := findDuplicateURLs(urls); len(duplicates) > 0 {
+		return nil, fmt.Errorf("重複するURLが見つかりました: %v", duplicates)
+	}
+
 	return urls, nil
 }
 
-func readFile(filename string) ([]byte, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("ファイル読み込みエラー: %v", err)
-	}
-	defer file.Close()
+func findDuplicateURLs(urls []string) []string {
+	seen := make(map[string]int)
+	var duplicates []string
 
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return nil, fmt.Errorf("ファイル内容読み込みエラー: %v", err)
+	// 各URLの出現回数をカウント
+	for i, url := range urls {
+		if firstIndex, exists := seen[url]; exists {
+			// 重複が見つかった場合、詳細情報を追加
+			duplicateInfo := fmt.Sprintf("%s (位置: %d, %d)", url, firstIndex+1, i+1)
+			if slices.Index(duplicates, duplicateInfo) == -1 {
+				duplicates = append(duplicates, duplicateInfo)
+			}
+		} else {
+			seen[url] = i
+		}
 	}
 
-	return data, nil
+	return duplicates
+}
+
+func copyToClipboard(text string) error {
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
 }
 
 // ========================================
@@ -286,17 +321,19 @@ func extractNameAndReading(character *Character, doc *html.Node) {
 	}
 
 	text := getNodeText(nameNode)
-	if !strings.Contains(text, "(") || !strings.Contains(text, ")") {
+
+	// strings.Cutを使って効率的に分割
+	name, rest, found := strings.Cut(text, "(")
+	if !found {
 		return
 	}
 
-	parts := strings.Split(text, "(")
-	if len(parts) < 2 {
+	reading, _, found := strings.Cut(rest, ")")
+	if !found {
 		return
 	}
 
-	character.Name = strings.TrimSpace(parts[0])
-	reading := strings.Split(parts[1], ")")[0]
+	character.Name = strings.TrimSpace(name)
 	character.Reading = strings.TrimSpace(reading)
 }
 
@@ -334,7 +371,7 @@ func extractBasicInfoFromTable(character *Character, table *html.Node) {
 
 		// 字
 		if len(cells) > 1 {
-			character.Zi = strings.TrimSpace(getNodeText(cells[1]))
+			character.Azana = strings.TrimSpace(getNodeText(cells[1]))
 		}
 
 		// 没年
@@ -651,10 +688,9 @@ func isInterestCell(text string) bool {
 // ========================================
 
 func cleanTacticSkillText(text string) string {
-	if idx := strings.Index(text, "("); idx != -1 {
-		text = text[:idx]
-	}
-	return strings.TrimSpace(text)
+	// strings.Cutを使って効率的に括弧を除去
+	before, _, _ := strings.Cut(text, "(")
+	return strings.TrimSpace(before)
 }
 
 func containsAnyString(text string, substrings []string) bool {
