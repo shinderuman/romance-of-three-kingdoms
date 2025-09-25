@@ -58,22 +58,22 @@ type Character struct {
 	Name         string `json:"名前"`
 	Reading      string `json:"読み"`
 	Azana        string `json:"字"`
-	DeathYear    int    `json:"没年"`
-	DeathPlus1   int    `json:"没年+1"`
 	Leadership   int    `json:"統率"`
 	Force        int    `json:"武力"`
 	Intelligence int    `json:"知力"`
 	Politics     int    `json:"政治"`
 	Charm        int    `json:"魅力"`
-	Personality  string `json:"性格"`
-	Loyalty      int    `json:"義理"`
-	Fame         string `json:"重視名声"`
-	Greed        string `json:"物欲"`
-	Strategy     string `json:"戦略傾向"`
-	Interest     string `json:"興味"`
 	Talent       string `json:"奇才"`
+	Interest     string `json:"興味"`
+	Greed        string `json:"物欲"`
+	Loyalty      int    `json:"義理"`
+	Personality  string `json:"性格"`
+	Strategy     string `json:"戦略傾向"`
+	DeathYear    int    `json:"没年"`
+	DeathPlus1   int    `json:"没年+1"`
 	Tactics      string `json:"戦法"`
 	Skills       string `json:"特技"`
+	Fame         string `json:"重視名声"`
 }
 
 // ========================================
