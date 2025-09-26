@@ -70,7 +70,7 @@ type Character struct {
 	Personality  string `json:"性格"`
 	Strategy     string `json:"戦略傾向"`
 	DeathYear    int    `json:"没年"`
-	DeathPlus1   int    `json:"没年+1"`
+	DeathMinus13 int    `json:"没年-13"`
 	Tactics      string `json:"戦法"`
 	Skills       string `json:"特技"`
 	Fame         string `json:"重視名声"`
@@ -378,7 +378,7 @@ func extractBasicInfoFromTable(character *Character, table *html.Node) {
 		if len(cells) > 6 {
 			if deathYear, err := strconv.Atoi(strings.TrimSpace(getNodeText(cells[6]))); err == nil {
 				character.DeathYear = deathYear
-				character.DeathPlus1 = deathYear + 1
+				character.DeathMinus13 = deathYear - 13
 			}
 		}
 		break
