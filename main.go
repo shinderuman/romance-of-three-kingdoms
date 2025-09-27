@@ -20,35 +20,85 @@ import (
 )
 
 // ========================================
-// 定数定義
+// 設定と定数
 // ========================================
 
+// Config アプリケーション設定
+type Config struct {
+	DefaultJSONFile string
+	BaseURL         string
+	MaxRetries      int
+	BaseDelay       time.Duration
+	RequestDelay    time.Duration
+	HTTPTimeout     time.Duration
+}
+
+// ParsingRules HTML解析用のルール
+type ParsingRules struct {
+	TacticCategories []string
+	SkillCategories  []string
+	InterestItems    []string
+	PersonalityTypes []string
+	FameTypes        []string
+	StrategyTypes    []string
+	InterestWidths   []string
+	ExcludeTexts     []string
+	RetryErrors      []string
+	BasicInfoHeaders []string
+	AbilityHeaders   []string
+	StatusHeaders    []string
+	TalentHeaders    []string
+	TacticsHeaders   []string
+	SkillsHeaders    []string
+}
+
 var (
-	// カテゴリ分類
-	tacticCategories = []string{"歩兵", "騎兵", "弓兵", "艦船", "軍略", "補助", "遁甲"}
-	skillCategories  = []string{"任務", "智謀", "兵科", "軍事"}
-	interestItems    = []string{"武具", "書物", "宝物", "茶器", "名馬", "美術", "酒", "音楽", "詩歌", "絵画", "香", "薬草"}
+	config = Config{
+		DefaultJSONFile: "characters.json",
+		BaseURL:         "https://wikiwiki.jp/sangokushi8r/",
+		MaxRetries:      3,
+		BaseDelay:       2 * time.Second,
+		RequestDelay:    500 * time.Millisecond,
+		HTTPTimeout:     30 * time.Second,
+	}
 
-	// 武将属性
-	personalityTypes = []string{"豪胆", "冷静", "剛胆", "沈着", "猪突", "温和", "臆病"}
-	fameTypes        = []string{"無関心", "重視", "文武不問", "武名", "高名"}
-	strategyTypes    = []string{"好戦", "普通", "積極", "消極", "私欲"}
-
-	// HTML解析用
-	interestWidths = []string{"60px", "53px", "52px", "51px", "50px"}
-	excludeTexts   = []string{"ー", "", "興味", "-"}
-
-	// エラー処理
-	retryErrors = []string{"429", "Too Many Requests"}
-
-	// テーブル識別用ヘッダー
-	basicInfoHeaders = []string{"字", "没年"}
-	abilityHeaders   = []string{"統率", "武力"}
-	statusHeaders    = []string{"重視名声", "物欲", "戦略傾向"}
-	talentHeaders    = []string{"奇才"}
-	tacticsHeaders   = []string{"戦法"}
-	skillsHeaders    = []string{"特技"}
+	rules = ParsingRules{
+		TacticCategories: []string{"歩兵", "騎兵", "弓兵", "艦船", "軍略", "補助", "遁甲"},
+		SkillCategories:  []string{"任務", "智謀", "兵科", "軍事"},
+		InterestItems:    []string{"武具", "書物", "宝物", "茶器", "名馬", "美術", "酒", "音楽", "詩歌", "絵画", "香", "薬草"},
+		PersonalityTypes: []string{"豪胆", "冷静", "剛胆", "沈着", "猪突", "温和", "臆病"},
+		FameTypes:        []string{"無関心", "重視", "文武不問", "武名", "高名"},
+		StrategyTypes:    []string{"好戦", "普通", "積極", "消極", "私欲"},
+		InterestWidths:   []string{"60px", "53px", "52px", "51px", "50px"},
+		ExcludeTexts:     []string{"ー", "", "興味", "-"},
+		RetryErrors:      []string{"429", "Too Many Requests"},
+		BasicInfoHeaders: []string{"字", "没年"},
+		AbilityHeaders:   []string{"統率", "武力"},
+		StatusHeaders:    []string{"重視名声", "物欲", "戦略傾向"},
+		TalentHeaders:    []string{"奇才"},
+		TacticsHeaders:   []string{"戦法"},
+		SkillsHeaders:    []string{"特技"},
+	}
 )
+
+// ========================================
+// エラー型定義
+// ========================================
+
+// ProcessingError 処理エラーの詳細情報
+type ProcessingError struct {
+	URL     string
+	Message string
+	Err     error
+}
+
+func (e *ProcessingError) Error() string {
+	return fmt.Sprintf("URL %s の処理エラー: %s", e.URL, e.Message)
+}
+
+func (e *ProcessingError) Unwrap() error {
+	return e.Err
+}
 
 // ========================================
 // 構造体定義
@@ -89,13 +139,12 @@ func main() {
 
 func getCategoryAndFile() (string, string) {
 	if len(os.Args) < 2 {
-		showAvailableCategories("characters.json")
+		showAvailableCategories(config.DefaultJSONFile)
 		log.Fatal("使用方法: go run main.go <カテゴリ名> [JSONファイル]\n例: go run main.go 奇才\n例: go run main.go 奇才 test.json")
 	}
 
 	category := os.Args[1]
-	jsonFile := "characters.json"
-
+	jsonFile := config.DefaultJSONFile
 	if len(os.Args) > 2 {
 		jsonFile = os.Args[2]
 	}
@@ -151,20 +200,25 @@ func processCategory(category, jsonFile string) []Character {
 }
 
 func handleProcessingError(url string, err error) {
-	if isRateLimitError(err) {
-		log.Fatalf("レート制限に達しました。しばらく時間を置いてから再実行してください: %v", err)
+	procErr := &ProcessingError{
+		URL:     url,
+		Message: err.Error(),
+		Err:     err,
 	}
-	log.Printf("URL %s の処理中にエラーが発生しました: %v", url, err)
+
+	if isRateLimitError(err) {
+		log.Fatalf("レート制限に達しました。しばらく時間を置いてから再実行してください: %v", procErr)
+	}
+	log.Printf("%v", procErr)
 }
 
 func isRateLimitError(err error) bool {
-	errMsg := err.Error()
-	return containsAnyString(errMsg, retryErrors) || strings.Contains(errMsg, "最大リトライ回数に達しました")
+	return containsAnyString(err.Error(), rules.RetryErrors) || strings.Contains(err.Error(), "最大リトライ回数に達しました")
 }
 
 func sleepBetweenRequests(currentIndex, totalCount int) {
 	if currentIndex < totalCount-1 {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(config.RequestDelay)
 	}
 }
 
@@ -233,9 +287,7 @@ func loadCharactersFromJSON(category, jsonFile string) ([]string, error) {
 }
 
 func generateURL(name string) string {
-	baseURL := "https://wikiwiki.jp/sangokushi8r/"
-	encodedName := url.QueryEscape(name)
-	return baseURL + encodedName
+	return config.BaseURL + url.QueryEscape(name)
 }
 
 func findDuplicateURLs(urls []string) []string {
@@ -259,18 +311,15 @@ func findDuplicateURLs(urls []string) []string {
 }
 
 func extractCharacterInfoWithRetry(url string) (Character, error) {
-	const maxRetries = 3
-	const baseDelay = 2 * time.Second
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := 0; attempt < config.MaxRetries; attempt++ {
 		character, err := extractCharacterInfo(url)
 		if err == nil {
 			return character, nil
 		}
 
-		if shouldRetry(err, attempt, maxRetries) {
-			delay := baseDelay * time.Duration(attempt+1)
-			fmt.Printf("429エラーが発生しました。%v後にリトライします... (試行 %d/%d)\n", delay, attempt+2, maxRetries)
+		if shouldRetry(err, attempt, config.MaxRetries) {
+			delay := config.BaseDelay * time.Duration(attempt+1)
+			fmt.Printf("429エラーが発生しました。%v後にリトライします... (試行 %d/%d)\n", delay, attempt+2, config.MaxRetries)
 			time.Sleep(delay)
 			continue
 		}
@@ -282,7 +331,7 @@ func extractCharacterInfoWithRetry(url string) (Character, error) {
 }
 
 func shouldRetry(err error, attempt, maxRetries int) bool {
-	return containsAnyString(err.Error(), retryErrors) && attempt < maxRetries-1
+	return containsAnyString(err.Error(), rules.RetryErrors) && attempt < maxRetries-1
 }
 
 func extractCharacterInfo(url string) (Character, error) {
@@ -300,7 +349,7 @@ func extractCharacterInfo(url string) (Character, error) {
 }
 
 func fetchAndParseHTML(url string) (*html.Node, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: config.HTTPTimeout}
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -379,11 +428,11 @@ func extractFromTables(character *Character, doc *html.Node) {
 	tables := findAllNodes(doc, "table")
 	for _, table := range tables {
 		switch {
-		case containsAllTexts(table, basicInfoHeaders):
+		case containsAllTexts(table, rules.BasicInfoHeaders):
 			extractBasicInfoFromTable(character, table)
-		case containsAllTexts(table, abilityHeaders):
+		case containsAllTexts(table, rules.AbilityHeaders):
 			extractAbilitiesFromTable(character, table)
-		case containsAnyTexts(table, talentHeaders):
+		case containsAnyTexts(table, rules.TalentHeaders):
 			extractTalentFromTable(character, table)
 		}
 	}
@@ -427,11 +476,14 @@ func extractAbilitiesFromTable(character *Character, table *html.Node) {
 	rows := findAllNodes(table, "tr")
 	for _, row := range rows {
 		cells := findAllNodes(row, "td")
-
-		extractAbilities(character, cells)
-		extractPersonalityAndLoyalty(character, cells)
-		extractStatusInfo(character, row, cells)
+		processTableRow(character, row, cells)
 	}
+}
+
+func processTableRow(character *Character, row *html.Node, cells []*html.Node) {
+	extractAbilities(character, cells)
+	extractPersonalityAndLoyalty(character, cells)
+	extractStatusInfo(character, row, cells)
 }
 
 func extractAbilities(character *Character, cells []*html.Node) {
@@ -469,7 +521,7 @@ func extractPersonalityAndLoyalty(character *Character, cells []*html.Node) {
 	// 現在の行で性格を探す
 	for j, cell := range cells {
 		text := strings.TrimSpace(getNodeText(cell))
-		if !slices.Contains(personalityTypes, text) {
+		if !slices.Contains(rules.PersonalityTypes, text) {
 			continue
 		}
 
@@ -489,7 +541,7 @@ func extractPersonalityAndLoyalty(character *Character, cells []*html.Node) {
 
 func extractStatusInfo(character *Character, row *html.Node, cells []*html.Node) {
 	// ヘッダー行をスキップ
-	if containsAnyTexts(row, statusHeaders) {
+	if containsAnyTexts(row, rules.StatusHeaders) {
 		return
 	}
 
@@ -499,7 +551,7 @@ func extractStatusInfo(character *Character, row *html.Node, cells []*html.Node)
 
 	for j, cell := range cells {
 		text := strings.TrimSpace(getNodeText(cell))
-		if !slices.Contains(fameTypes, text) {
+		if !slices.Contains(rules.FameTypes, text) {
 			continue
 		}
 
@@ -528,7 +580,7 @@ func extractStrategy(character *Character, cells []*html.Node, startIndex int) {
 			continue
 		}
 
-		if slices.Contains(strategyTypes, strategyText) {
+		if slices.Contains(rules.StrategyTypes, strategyText) {
 			character.Strategy = strategyText
 			break
 		} else if strategyText == "-" {
@@ -556,12 +608,12 @@ func extractInterests(character *Character, doc *html.Node) {
 	allCells := findAllNodes(doc, "td")
 
 	for _, cell := range allCells {
-		if !hasAnyStyleWidth(cell, interestWidths) {
+		if !hasAnyStyleWidth(cell, rules.InterestWidths) {
 			continue
 		}
 
 		text := strings.TrimSpace(getNodeText(cell))
-		if slices.Contains(excludeTexts, text) || !isInterestCell(text) {
+		if slices.Contains(rules.ExcludeTexts, text) || !isInterestCell(text) {
 			continue
 		}
 
@@ -577,9 +629,9 @@ func extractTacticsAndSkills(doc *html.Node) (string, string) {
 	tables := findAllNodes(doc, "table")
 	for _, table := range tables {
 		switch {
-		case containsAnyTexts(table, tacticsHeaders):
+		case containsAnyTexts(table, rules.TacticsHeaders):
 			tactics = extractFromSkillTable(table, isTacticCategory)
-		case containsAnyTexts(table, skillsHeaders):
+		case containsAnyTexts(table, rules.SkillsHeaders):
 			skills = extractFromSkillTable(table, isSkillCategory)
 		}
 	}
@@ -699,15 +751,15 @@ func hasAnyStyleWidth(n *html.Node, widths []string) bool {
 }
 
 func isTacticCategory(text string) bool {
-	return slices.Contains(tacticCategories, text)
+	return slices.Contains(rules.TacticCategories, text)
 }
 
 func isSkillCategory(text string) bool {
-	return slices.Contains(skillCategories, text)
+	return slices.Contains(rules.SkillCategories, text)
 }
 
 func isInterestCell(text string) bool {
-	return slices.Contains(interestItems, text)
+	return slices.Contains(rules.InterestItems, text)
 }
 
 func cleanTacticSkillText(text string) string {
