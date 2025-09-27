@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -29,7 +30,7 @@ var (
 	interestItems    = []string{"武具", "書物", "宝物", "茶器", "名馬", "美術", "酒", "音楽", "詩歌", "絵画", "香", "薬草"}
 
 	// 武将属性
-	personalityTypes = []string{"豪胆", "冷静", "剛胆", "沈着", "猪突"}
+	personalityTypes = []string{"豪胆", "冷静", "剛胆", "沈着", "猪突", "温和", "臆病"}
 	fameTypes        = []string{"無関心", "重視", "文武不問", "武名", "高名"}
 	strategyTypes    = []string{"好戦", "普通", "積極", "消極", "私欲"}
 
@@ -81,30 +82,58 @@ type Character struct {
 // ========================================
 
 func main() {
-	configFile := getConfigFile()
-	urls := loadURLs(configFile)
-	characters := processAllCharacters(urls)
+	category, jsonFile := getCategoryAndFile()
+	characters := processCategory(category, jsonFile)
 	outputJSON(characters)
 }
 
-func getConfigFile() string {
-	if len(os.Args) > 1 {
-		return os.Args[1]
+func getCategoryAndFile() (string, string) {
+	if len(os.Args) < 2 {
+		showAvailableCategories("characters.json")
+		log.Fatal("使用方法: go run main.go <カテゴリ名> [JSONファイル]\n例: go run main.go 奇才\n例: go run main.go 奇才 test.json")
 	}
-	return "urls.json"
+
+	category := os.Args[1]
+	jsonFile := "characters.json"
+
+	if len(os.Args) > 2 {
+		jsonFile = os.Args[2]
+	}
+
+	return category, jsonFile
 }
 
-func loadURLs(filename string) []string {
-	urls, err := loadURLsFromJSON(filename)
+func showAvailableCategories(jsonFile string) {
+	data, err := os.ReadFile(jsonFile)
 	if err != nil {
-		log.Fatal("URLの読み込みエラー:", err)
+		fmt.Fprintf(os.Stderr, "%sファイルの読み込みに失敗しました: %v\n", jsonFile, err)
+		return
 	}
-	return urls
+
+	var categorizedNames map[string][]string
+	if err := json.Unmarshal(data, &categorizedNames); err != nil {
+		fmt.Fprintf(os.Stderr, "JSONの解析に失敗しました: %v\n", err)
+		return
+	}
+
+	showAvailableCategoriesWithData(categorizedNames)
 }
 
-func processAllCharacters(urls []string) []Character {
-	var characters []Character
+func showAvailableCategoriesWithData(categorizedNames map[string][]string) {
+	fmt.Fprintf(os.Stderr, "利用可能なカテゴリ:\n")
+	for category, names := range categorizedNames {
+		fmt.Fprintf(os.Stderr, "  %s (%d人)\n", category, len(names))
+	}
+	fmt.Fprintf(os.Stderr, "\n")
+}
 
+func processCategory(category, jsonFile string) []Character {
+	urls, err := loadCharactersFromJSON(category, jsonFile)
+	if err != nil {
+		log.Fatal("キャラクターファイルの読み込みエラー:", err)
+	}
+
+	var characters []Character
 	for i, url := range urls {
 		fmt.Printf("処理中 (%d/%d): %s\n", i+1, len(urls), url)
 
@@ -163,19 +192,36 @@ func outputJSON(characters []Character) {
 	}
 }
 
-// ========================================
-// ファイル読み込み
-// ========================================
+func copyToClipboard(text string) error {
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
+}
 
-func loadURLsFromJSON(filename string) ([]string, error) {
-	data, err := os.ReadFile(filename)
+func loadCharactersFromJSON(category, jsonFile string) ([]string, error) {
+	data, err := os.ReadFile(jsonFile)
 	if err != nil {
 		return nil, fmt.Errorf("ファイル読み込みエラー: %v", err)
 	}
 
-	var urls []string
-	if err := json.Unmarshal(data, &urls); err != nil {
+	// カテゴリ別の武将名を格納するマップ
+	var categorizedNames map[string][]string
+	if err := json.Unmarshal(data, &categorizedNames); err != nil {
 		return nil, fmt.Errorf("JSON解析エラー: %v", err)
+	}
+
+	// 指定されたカテゴリの武将名のみを使用
+	selectedNames, exists := categorizedNames[category]
+	if !exists {
+		showAvailableCategoriesWithData(categorizedNames)
+		return nil, fmt.Errorf("カテゴリ '%s' が見つかりません", category)
+	}
+	fmt.Printf("カテゴリ '%s' の武将を処理します (%d人)\n", category, len(selectedNames))
+
+	// 武将名からURLを生成
+	urls := make([]string, len(selectedNames))
+	for i, name := range selectedNames {
+		urls[i] = generateURL(name)
 	}
 
 	// 重複チェック
@@ -184,6 +230,12 @@ func loadURLsFromJSON(filename string) ([]string, error) {
 	}
 
 	return urls, nil
+}
+
+func generateURL(name string) string {
+	baseURL := "https://wikiwiki.jp/sangokushi8r/"
+	encodedName := url.QueryEscape(name)
+	return baseURL + encodedName
 }
 
 func findDuplicateURLs(urls []string) []string {
@@ -205,16 +257,6 @@ func findDuplicateURLs(urls []string) []string {
 
 	return duplicates
 }
-
-func copyToClipboard(text string) error {
-	cmd := exec.Command("pbcopy")
-	cmd.Stdin = strings.NewReader(text)
-	return cmd.Run()
-}
-
-// ========================================
-// HTTP処理とリトライ
-// ========================================
 
 func extractCharacterInfoWithRetry(url string) (Character, error) {
 	const maxRetries = 3
@@ -299,10 +341,6 @@ func checkHTTPStatus(resp *http.Response) error {
 	}
 	return nil
 }
-
-// ========================================
-// 基本情報抽出
-// ========================================
 
 func extractBasicInfo(doc *html.Node) Character {
 	character := Character{}
@@ -428,6 +466,7 @@ func extractPersonalityAndLoyalty(character *Character, cells []*html.Node) {
 		return
 	}
 
+	// 現在の行で性格を探す
 	for j, cell := range cells {
 		text := strings.TrimSpace(getNodeText(cell))
 		if !slices.Contains(personalityTypes, text) {
@@ -444,7 +483,7 @@ func extractPersonalityAndLoyalty(character *Character, cells []*html.Node) {
 				break
 			}
 		}
-		break
+		return
 	}
 }
 
@@ -531,10 +570,6 @@ func extractInterests(character *Character, doc *html.Node) {
 
 	character.Interest = strings.Join(interests, ", ")
 }
-
-// ========================================
-// 戦法・特技抽出
-// ========================================
 
 func extractTacticsAndSkills(doc *html.Node) (string, string) {
 	var tactics, skills []string
@@ -632,10 +667,6 @@ func getNodeText(n *html.Node) string {
 	return text.String()
 }
 
-// ========================================
-// スタイル・属性チェック関数
-// ========================================
-
 func hasStyle(n *html.Node, style string) bool {
 	for _, attr := range n.Attr {
 		if attr.Key == "style" && strings.Contains(attr.Val, style) {
@@ -667,10 +698,6 @@ func hasAnyStyleWidth(n *html.Node, widths []string) bool {
 	return false
 }
 
-// ========================================
-// 分類・判定関数
-// ========================================
-
 func isTacticCategory(text string) bool {
 	return slices.Contains(tacticCategories, text)
 }
@@ -682,10 +709,6 @@ func isSkillCategory(text string) bool {
 func isInterestCell(text string) bool {
 	return slices.Contains(interestItems, text)
 }
-
-// ========================================
-// テキスト処理ヘルパー関数
-// ========================================
 
 func cleanTacticSkillText(text string) string {
 	// strings.Cutを使って効率的に括弧を除去
