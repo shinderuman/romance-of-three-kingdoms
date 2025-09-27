@@ -432,6 +432,8 @@ func extractFromTables(character *Character, doc *html.Node) {
 			extractBasicInfoFromTable(character, table)
 		case containsAllTexts(table, rules.AbilityHeaders):
 			extractAbilitiesFromTable(character, table)
+			// 能力テーブルに奇才が含まれている場合もあるので、同じテーブルで奇才も抽出
+			extractTalentFromTable(character, table)
 		case containsAnyTexts(table, rules.TalentHeaders):
 			extractTalentFromTable(character, table)
 		}
@@ -591,6 +593,11 @@ func extractStrategy(character *Character, cells []*html.Node, startIndex int) {
 }
 
 func extractTalentFromTable(character *Character, table *html.Node) {
+	// 奇才テーブルかどうかを確認（「奇才」「効果」のヘッダーを持つ）
+	if !isTalentTable(table) {
+		return
+	}
+
 	rows := findAllNodes(table, "tr")
 	for _, row := range rows {
 		cells := findAllNodes(row, "td")
@@ -601,6 +608,14 @@ func extractTalentFromTable(character *Character, table *html.Node) {
 			}
 		}
 	}
+}
+
+func isTalentTable(table *html.Node) bool {
+	// テーブル全体のテキストを確認
+	tableText := getNodeText(table)
+
+	// 「奇才」と「効果」の両方が含まれている場合のみ奇才テーブルとみなす
+	return strings.Contains(tableText, "奇才") && strings.Contains(tableText, "効果")
 }
 
 func extractInterests(character *Character, doc *html.Node) {
